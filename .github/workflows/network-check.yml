@@ -1,0 +1,22 @@
+name: Mesh Network Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_node:
+        description: 'Nœud à tester (ex: pve02)'
+        required: true
+        default: 'pve02'
+
+jobs:
+  validate_mesh:
+    name: IPv6 Mesh Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Valider le mesh sur ${{ github.event.inputs.target_node }}
+        run: |
+          chmod +x scripts/validate_mesh.sh
+          ./scripts/validate_mesh.sh ${{ github.event.inputs.target_node }}

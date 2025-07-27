@@ -1,0 +1,21 @@
+# Système
+*.swp
+*.bak
+*.log
+
+# Mac / Linux
+.DS_Store
+.cache/
+
+# Répertoires d’exécution
+__pycache__/
+*.pid
+
+# Éditeurs
+.idea/
+.vscode/
+*.sublime*
+
+# Scripts
+*.out
+*.tmp

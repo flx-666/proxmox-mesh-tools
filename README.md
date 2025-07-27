@@ -13,14 +13,18 @@ Scripts pour rollback et validation réseau mesh IPv6 dans une infra Proxmox + C
 
 ## 📂 Structure
 proxmox-mesh-tools/
- ├── scripts/
- 	│
- 	├── rollback_conf.sh
- 	│
- 	└── validate_mesh.sh
- ├── Makefile
- ├── README.md
- └── .gitignore
+├── Makefile
+├── README.md
+└── .gitignore
+└── scripts/
+    ├── config_cluster_dns.sh          # DNS + hostnames + résolvabilité
+    ├── config_cluster_frr.sh          # Configuration dynamique de /etc/frr/frr.conf
+    ├── config_cluster_ceph.sh         # Génère /etc/pve/ceph.conf depuis pve01
+    ├── config_cluster_pvecm.sh        # Validation du cluster Proxmox
+    ├── rollback_conf.sh               # Roll back sur config sauvegardée
+    └── validate_mesh.sh               # Validation du cluster Proxmox
+
+
 
 ---
 

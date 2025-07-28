@@ -1,61 +1,97 @@
 #!/bin/bash
 
-# Usage : ./rollback_conf.sh <node> <date: YYYY-MM-DD>
-NODE="$1"
-DATE="$2"
+CONFIGS=("corosync" "ceph" "frr" "frr.local")
+CONFIG_PATHS=(
+  "/etc/pve/corosync.conf"
+  "/etc/pve/ceph.conf"
+  "/etc/frr/frr.conf"
+  "/etc/frr/frr.conf.local"
+)
+BACKUP_PATTERN=(
+  "/etc/pve/corosync.conf.bak.*"
+  "/etc/pve/ceph.conf.bak.*"
+  "/etc/frr/frr.conf.bak.*"
+  "/etc/frr/frr.conf.local.bak.*"
+)
 
-if [[ -z "$NODE" || -z "$DATE" ]]; then
-  echo "❌ Usage: $0 <node> <date (YYYY-MM-DD)>"
-  exit 1
+# Detect if SDN override exists
+if [[ -f "/etc/frr/frr.conf.local" ]]; then
+  FRR_INDEX=3
+else
+  FRR_INDEX=2
 fi
 
-echo "🔁 Rollback des fichiers de configuration sur $NODE à la date $DATE..."
+# Parse flags
+INTERACTIVE=true
+DRY_RUN=false
+SELECTED_CONFIG=""
+ROLL_ALL=false
 
-BACKUP_DIR="/root/conf-backup/$DATE"
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --dry-run) DRY_RUN=true ;;
+    --config) SELECTED_CONFIG="$2"; INTERACTIVE=false; shift ;;
+    --all) ROLL_ALL=true; INTERACTIVE=false ;;
+    *) echo "Unknown option: $1"; exit 1 ;;
+  esac
+  shift
+done
 
-# Vérification préliminaire
-ssh "$NODE" "test -f $BACKUP_DIR/interfaces.bak && test -f $BACKUP_DIR/frr.conf.bak"
-if [[ $? -ne 0 ]]; then
-  echo "❌ Fichiers de sauvegarde introuvables pour $NODE à $DATE"
-  exit 1
+rollback() {
+  NAME=$1
+  INDEX=$2
+  FILE=${CONFIG_PATHS[$INDEX]}
+  PATTERN=${BACKUP_PATTERN[$INDEX]}
+  LATEST=$(ls -t $PATTERN 2>/dev/null | head -n 1)
+
+  [[ -z "$LATEST" ]] && echo "❌ No backup found for $NAME" && return
+
+  TIMESTAMP=$(date '+%Y-%m-%d-%H:%M')
+  ARCHIVE="${FILE}.orig.$TIMESTAMP"
+
+  if $DRY_RUN; then
+    echo "🧪 Dry-run mode active: no files will be changed"
+    echo "🗂️ Latest backup found: $LATEST"
+    echo "📁 Current config archived as: $ARCHIVE"
+    echo "🔍 Command that would run: cp $LATEST → $FILE"
+    echo "📜 Journal for ${NAME}:"
+    journalctl -n 10 -u "${NAME}" | tail -n 10
+  else
+    cp "$FILE" "$ARCHIVE" && cp "$LATEST" "$FILE"
+    systemctl restart "${NAME}" || echo "⚠️ Could not restart $NAME"
+    journalctl -n 10 -u "${NAME}" | tail -n 10
+    echo "✅ Rolled back $NAME"
+  fi
+}
+
+if $INTERACTIVE; then
+  echo "Select config to roll back:"
+  echo "1) corosync"
+  echo "2) ceph"
+  echo "3) frr"
+  echo "4) frr.local (SDN override)"
+  echo "5) all"
+  read -p "Enter choice [1–5]: " CHOICE
+
+  if [[ "$CHOICE" -eq 5 ]]; then
+    ROLL_ALL=true
+  else
+    INDEX=$((CHOICE - 1))
+    rollback "${CONFIGS[$INDEX]}" "$INDEX"
+    exit
+  fi
 fi
 
-# Restauration
-echo "📦 Restauration des fichiers..."
-ssh "$NODE" "
-  cp $BACKUP_DIR/interfaces.bak /etc/network/interfaces &&
-  cp $BACKUP_DIR/frr.conf.bak /etc/frr/frr.conf &&
-  systemctl restart networking &&
-  systemctl restart frr
-"
-
-# 🔍 Vérifications post-restauration
-echo "🔎 Validation après rollback sur $NODE..."
-ssh "$NODE" "
-  echo '📡 Résolution DNS :';
-  getent hosts $NODE
-  getent hosts $NODE.ad.famille-clerc.com
-
-  echo -e '\n🧩 corosync.conf (liens Link0 / Link1) :';
-  grep -A2 'link' /etc/pve/corosync.conf
-
-  echo -e '\n🔍 Quorum Proxmox :';
-  pvecm status | grep -E 'Quorate|Vote|Node'
-
-  echo -e '\n📮 Réseau Ceph (IPv6 mesh attendu) :';
-  ceph config show | grep public_network
-  ceph -s | grep mon
-
-  echo -e '\n🔁 Service FRR :';
-  systemctl is-active frr
-  systemctl status frr --no-pager | head -n 10
-
-  echo -e '\n📶 Routage IPv6 vers mesh (fc00::/7) :';
-  ip -6 route | grep fc00
-
-  echo -e '\n🧪 ping6 vers voisins :';
-  ping6 -c 2 fc00::82:1 || echo '⚠️ ping échoué vers pve02'
-  ping6 -c 2 fc00::83:1 || echo '⚠️ ping échoué vers pve03'
-"
-
-echo "✅ Rollback terminé pour $NODE ✔️"
+if $ROLL_ALL; then
+  for i in "${!CONFIG_PATHS[@]}"; do
+    rollback "${CONFIGS[$i]}" "$i"
+  done
+elif [[ -n "$SELECTED_CONFIG" ]]; then
+  for i in "${!CONFIGS[@]}"; do
+    if [[ "${CONFIGS[$i]}" == "$SELECTED_CONFIG" ]]; then
+      rollback "$SELECTED_CONFIG" "$i"
+      exit
+    fi
+  done
+  echo "❌ Unknown config: $SELECTED_CONFIG"
+fi

@@ -1,37 +1,68 @@
 #!/bin/bash
 set -euo pipefail
 
-source "/opt/proxmox-mesh-tools/lib/proxmox-mesh-tools-lib.sh"
-require_root_user
-backup_script "$0"
-rotate_backups "$0"
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🌐 config_cluster_dns.sh — Cluster-wide DNS setup with backup & dry-run
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-#!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/../../lib/proxmox-mesh-tools-lib.sh"
 
-NODE=$(hostname)
-IPV6_MESH=$(ip -6 addr | grep "fc00::80" | grep -w lo | awk '{print $2}' | cut -d/ -f1 | head -n1)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🌱 Load .env + prepare backup/log directories
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+required_env_vars=("DNS_DOMAIN" "DNS_SEARCH" "DNS_SERVERS")
+load_env_and_validate "${required_env_vars[@]}"
 
-echo "🔧 Hostname → $NODE"
-hostnamectl set-hostname "$NODE"
+REPO_ROOT="$(get_repo_root)"
+BACKUP_DIR="$REPO_ROOT/Backups"
+mkdir -p "$BACKUP_DIR"
 
-echo "🔧 /etc/hosts → Ajout IP mesh"
-grep -q "$NODE" /etc/hosts || echo "$IPV6_MESH $NODE" >> /etc/hosts
+timestamp="$(date +%Y%m%d-%H%M%S)"
+LOG_FILE="$BACKUP_DIR/config_cluster_dns.$timestamp.log"
+exec > >(tee "$LOG_FILE") 2>&1
 
-cat <<EOF >> /etc/hosts
-fc00::80:1 pve01
-fc00::80:2 pve02
-fc00::80:3 pve03
-# 10.1.2.21 dc01.ad.famille-clerc.com
-# 10.1.2.22 dc02.ad.famille-clerc.com
-EOF
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🔧 Generate full DNS update command block
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+generate_dns_block() {
+  block=""
+  block+="echo search $DNS_SEARCH > /etc/resolv.conf\n"
+  block+="echo domain $DNS_DOMAIN >> /etc/resolv.conf\n"
+  for entry in $(echo "$DNS_SERVERS" | tr ',' ' '); do
+    ip="${entry%%:*}"
+    flag="${entry##*:}"
+    if [[ "$flag" == "active" ]]; then
+      block+="echo nameserver $ip >> /etc/resolv.conf\n"
+    else
+      block+="echo \"# inactive nameserver $ip\" >> /etc/resolv.conf\n"
+    fi
+  done
+  echo -e "$block"
+}
 
-echo "🔧 /etc/resolv.conf"
-cat <<EOF > /etc/resolv.conf
-nameserver 10.1.2.21
-nameserver 10.1.2.22
-nameserver 10.1.2.1
-search ad.famille-clerc.com
-EOF
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🚀 Execute (or simulate) DNS changes per node
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+log_info "🔧 Starting DNS propagation across cluster..."
 
-echo "🔧 /etc/nsswitch.conf"
-sed -i 's/^hosts:.*/hosts: files dns/' /etc/nsswitch.conf
+for node in $(get_all_nodes); do
+  log_info "📍 Processing node: $node"
+
+  dns_block="$(generate_dns_block)"
+
+  # 🧷 Local backup of remote resolv.conf
+  log_info "📥 Backing up remote /etc/resolv.conf from $node"
+  ssh root@"$node" cat /etc/resolv.conf > "$BACKUP_DIR/resolv.conf.$node.$timestamp" \
+    || log_warn "⚠️ Failed to fetch /etc/resolv.conf from $node"
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log_info "🧪 [dry-run] Would execute on $node:"
+    echo -e "ssh root@$node bash -c '\n$dns_block'"
+  else
+    ssh root@"$node" bash -c "$dns_block"
+    log_info "✅ DNS updated on $node"
+  fi
+done
+
+log_success "🎉 DNS configuration completed for all nodes!"

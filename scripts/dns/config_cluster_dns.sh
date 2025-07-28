@@ -42,27 +42,44 @@ generate_dns_block() {
 }
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🚀 Execute (or simulate) DNS changes per node
+# 📥 Backup function with dry-run awareness
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+backup_resolv_conf() {
+  local node="$1"
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    log_info "🧪 [dry-run] Skipping backup from $node"
+  else
+    log_info "📥 Backing up remote /etc/resolv.conf from $node"
+    ssh root@"$node" cat /etc/resolv.conf > "$BACKUP_DIR/resolv.conf.$node.$timestamp" \
+      || log_warn "⚠️ Failed to fetch /etc/resolv.conf from $node"
+  fi
+}
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🚀 DNS propagation function with dry-run logic
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+propagate_dns() {
+  local node="$1"
+  local block="$(generate_dns_block)"
+
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    log_info "🧪 [dry-run] Would execute on $node:"
+    echo -e "ssh root@$node bash -c '\n$block'"
+  else
+    ssh root@"$node" bash -c "$block"
+    log_info "✅ DNS updated on $node"
+  fi
+}
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🧼 Cluster-wide Execution Loop
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 log_info "🔧 Starting DNS propagation across cluster..."
 
 for node in $(get_all_nodes); do
   log_info "📍 Processing node: $node"
-
-  dns_block="$(generate_dns_block)"
-
-  # 🧷 Local backup of remote resolv.conf
-  log_info "📥 Backing up remote /etc/resolv.conf from $node"
-  ssh root@"$node" cat /etc/resolv.conf > "$BACKUP_DIR/resolv.conf.$node.$timestamp" \
-    || log_warn "⚠️ Failed to fetch /etc/resolv.conf from $node"
-
-  if [[ "$DRY_RUN" == "true" ]]; then
-    log_info "🧪 [dry-run] Would execute on $node:"
-    echo -e "ssh root@$node bash -c '\n$dns_block'"
-  else
-    ssh root@"$node" bash -c "$dns_block"
-    log_info "✅ DNS updated on $node"
-  fi
+  backup_resolv_conf "$node"
+  propagate_dns "$node"
 done
 
 log_success "🎉 DNS configuration completed for all nodes!"

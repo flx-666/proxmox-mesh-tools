@@ -5,14 +5,10 @@ source "/opt/proxmox-mesh-tools/lib/proxmox-mesh-tools-lib.sh"
 require_root_user
 backup_script "$0"
 rotate_backups "$0"
-REQUIRED_VARS=(CLUSTER_NAME NODE_NAME INTERFACE BINDNETADDR)
-load_env_and_validate "${REQUIRED_VARS[@]}" || exit 1
 
 #!/bin/bash
 
-REQUIRED_VARS=("CEPH_MON_MAP" "CEPH_PUBLIC_NETWORK" "CEPH_CLUSTER_NETWORK")
 
-if ! load_env_and_validate "${REQUIRED_VARS[@]}"; then
   log_error "Environment failed validation. Aborting."
   exit 1
 fi

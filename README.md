@@ -1,48 +1,43 @@
 ![CI Network Checks](https://github.com/famille-clerc/proxmox-mesh-tools/actions/workflows/network-check.yml/badge.svg)
 ![Shell Linter](https://github.com/famille-clerc/proxmox-mesh-tools/actions/workflows/shellcheck.yml/badge.svg)
-# proxmox-mesh-tools 🚀
+# 🔗 proxmox-mesh-tools/scripts — Mesh Provisioning Toolkit
 
-Scripts pour rollback et validation réseau mesh IPv6 dans une infra Proxmox + Ceph + FRR.
-
-## 🌐 Objectifs
-
-- Restauration des fichiers critiques (`interfaces`, `frr.conf`)
-- Validation réseau post-rollback
-- Vérification Ceph, quorum HA, DNS, ping IPv6 mesh
-- Routage dynamique OSPF via FRR
-
-## 📂 Structure
-proxmox-mesh-tools/
-├── Makefile
-├── README.md
-└── .gitignore
-└── scripts/
-    ├── config_cluster_dns.sh          # DNS + hostnames + résolvabilité
-    ├── config_cluster_frr.sh          # Configuration dynamique de /etc/frr/frr.conf
-    ├── config_cluster_ceph.sh         # Génère /etc/pve/ceph.conf depuis pve01
-    ├── config_cluster_pvecm.sh        # Validation du cluster Proxmox
-    ├── rollback_conf.sh               # Roll back sur config sauvegardée
-    └── validate_mesh.sh               # Validation du cluster Proxmox
-
-
+Modular scripts for building a loopback-based mesh fabric across your Proxmox nodes. The system configures IPv6 overlays, Thunderbolt peer links, BGP routes, and Ceph + Corosync services without touching `/etc/network/interfaces` directly. All mesh-related configs are modular and sourced cleanly.
 
 ---
 
-## 🧪 Scripts
+## 📁 Flat Description of Files
 
-| Script               | Fonction principale                                            |
-|---------------------|----------------------------------------------------------------|
-| `rollback_conf.sh`  | Restaure la conf réseau et relance les services                |
-| `validate_mesh.sh`  | Vérifie connectivité, Ceph, DNS, quorum et ping IPv6 mesh      |
-| `Makefile`          | Lance les scripts facilement depuis le nœud maître (`pve01`)   |
+| Filename                   | Description |
+|----------------------------|-------------|
+| `.env.example`             | Environment variable template with cluster-wide settings: node maps, mesh IPs, Thunderbolt interfaces, ring IPs, DNS search domains. |
+| `README.md`                | Setup overview and recovery guidance. |
+| `config_cluster.sh`        | Base dispatcher script, calls individual modules in order. |
+| `config_cluster_ceph.sh`   | Generates `ceph.conf` with mesh IPv6 overlay; configures MON/MDS. |
+| `config_cluster_frr.sh`    | BGP mesh config between loopback IPs via FRRouting. |
+| `config_cluster_dns.sh`    | Adds DNS forwarders and multiple search domains to mesh interface. |
+| `config_cluster_pvecm.sh`  | Generates dual-ring Corosync config and handles optional `pvecm join`. |
+| `validate_mesh.sh`         | Verifies `.env` completeness, IP/interface sanity, and sourcing for `interfaces.d`. |
+| `rollback_conf.sh`         | Reverts generated mesh fragments cleanly. |
 
 ---
 
-## 🔧 Utilisation rapide
+## 🧪 Runtime Behavior
+
+Scripts will:
+
+- 🛡️ Modify only `/etc/network/interfaces.d/thunderbolt`
+- 🔍 Verify presence of `source /etc/network/interfaces.d/*` in `/etc/network/interfaces`
+- 🧪 Support dry-run mode via `DRY_RUN=1` flag
+- 🧠 Parse `.env` mappings for per-node IPs and NICs
+- 🌐 Handle dual-stack addressing (IPv6 + IPv4)
+- 🔁 Support rollback with `rollback_conf.sh`
+
+---
+
+## 📦 Required Setup
+
+Copy `.env.example` and adjust per your cluster topology:
 
 ```bash
-# Rollback config réseau pour le nœud spécifié
-make rollback NODE=pve02 DATE=2025-07-26
-
-# Validation complète du nœud réseau
-make validate NODE=pve02
+cp .env.example .env
